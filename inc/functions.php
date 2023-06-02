@@ -18,43 +18,502 @@ function mssso_aal_init_roles( $roles ) {
     return $roles;
 }
 
-/* User Logout function */
-add_action( 'parse_request', 'mssso_logout', 10 );
+// add_action('','');
 
+add_action( 'parse_request', 'mssso_logout' ,10 );
 function mssso_logout() {
-
-    // Check for 'logout' in the URL
+    
+   
     if ( strpos( $_SERVER['REQUEST_URI'], '/logout' ) !== false ) {
         /* Listing all cookies */
-       $legacy_cookes = [
-            'firstName', 'lastName', 'MsUser', 'isMember', 'jobTitle',
-            'jobCategory', 'hasSSLN', 'hasWMNN', 'hasWMNNMD',
-            'hasWMNNOH', 'hasWMNNRI', 'hasWMNNHub',
-            'hasLFAcademy2018', 'hasLFAcademy2019', 'hasLFAcademy2020', 'hasLFAcademy2021',
-            'hasLFBoardofTrustees', 'hasLFDirectors', 'hasLFSeniorDirectors', 'hasLFAffiliates',
-            'hasTXNSI', 'hasTXNSICollaborative', 'hasRPDC', 'LMScourses' , 'LMSacademy','LMSvirtualCoachesAcademy' ,
-            'LMSvirtualMentorAcademy', 'LMSbecomingaLearningTeam', 'LMSassessingImpact', 'LMSlearningPrincipal',
-            'LMSnetworks', 'LMSstaff', 'LMSinstructor',
-        ];
+        // $user_id = get_current_user_id();
 
-        /* Deleting all cookies on logout */
-       foreach ($legacy_cookes as $cookie_name) {
-            // this "deletes" the cookie:
-            unset($_COOKIE[$cookie_name]);
-            setcookie($cookie_name, '' , time()-86400, '/', get_sso_cookie_domain());
-        }
-
-        /* Logout from WP */
+        wp_clear_auth_cookie();
         wp_logout();
-
         /* After WP logout, redirect to MS logout URL to log the user out of Membersuite
          * see get_ms_url() in functions-member.php file
          */
-        wp_redirect( get_ms_url() . '/Logout.aspx', 302 );
+
+        wp_safe_redirect( home_url() );
 
         exit();
+       
+    }
+        
+}
+
+add_action('clear_auth_cookie','clear_legacy_cookies' );
+function clear_legacy_cookies(){
+    $legacy_cookes = [
+        'ms_tokenGUID','firstName', 'lastName', 'MsUser', 'isMember', 'jobTitle',
+        'jobCategory', 'hasSSLN', 'hasWMNN', 'hasWMNNMD',
+        'hasWMNNOH', 'hasWMNNRI', 'hasWMNNHub',
+        'hasLFAcademy2018', 'hasLFAcademy2019', 'hasLFAcademy2020', 'hasLFAcademy2021',
+        'hasLFBoardofTrustees', 'hasLFDirectors', 'hasLFSeniorDirectors', 'hasLFAffiliates',
+        'hasTXNSI', 'hasTXNSICollaborative', 'hasRPDC', 'LMScourses' , 'LMSacademy','LMSvirtualCoachesAcademy' ,
+        'LMSvirtualMentorAcademy', 'LMSbecomingaLearningTeam', 'LMSassessingImpact', 'LMSlearningPrincipal',
+        'LMSnetworks', 'LMSstaff', 'LMSinstructor',
+    ];
+
+    /* Deleting all cookies on logout */
+    foreach ($legacy_cookes as $cookie_name) {
+        // this "deletes" the cookie:
+        unset( $_COOKIE[$cookie_name]);
+        setcookie($cookie_name, '' , time()-86400, '/',get_sso_cookie_domain() ) ;
     }
 }
+
+add_action('init','lf_login_the_ms_user',10 ,1 );
+function lf_login_the_ms_user( $wp ){
+
+
+    if( isset( $_COOKIE['ms_tokenGUID']  ) && !is_user_logged_in() ){
+        $tokenGUID_cookie = $_COOKIE['ms_tokenGUID'];
+        $tenant_id = Userconfig::read( 'tenantID' );
+
+        // Get the tokenGuid from Cookie and hit GET to get AuthToken
+        $authToken = '';
+
+        // Call the Auth Token API
+        $authToken = lf_get_ms_auth_token( $tokenGUID_cookie, $tenant_id );
+       
+        if( isset( $authToken ) && $authToken !=false ){
+            $auth_token = $authToken;
+
+        } 
+
+        // Call the Whoami API
+        $user_ms_data = lf_get_ms_whoami( $auth_token );
+        
+        
+        // If user data exists check if user receives member benefits
+        $other_user_data = '';
+        // $is_member = '';
+        if( !empty( $user_ms_data ) ){
+
+            if( $user_ms_data['receivesMemberBenefits'] == true && $user_ms_data['receivesMemberBenefits'] != null ){
+                $receivesmemberbenefitsvalue = 1;
+            }else{
+                $receivesmemberbenefitsvalue = 0;
+
+            }
+
+            $other_user_data = array(
+                'membership_id' => $user_ms_data['membershipId'],
+                'owner_id'      => $user_ms_data['ownerId'],
+                'email'         => $user_ms_data['email'],
+                'user_id'       => $user_ms_data['userId']
+
+            );
+
+            $individualID = $other_user_data['owner_id'];
+            // Get membership data by msql query
+            //Using MSQL Query Method to search for the person's
+
+             //FirstName, LastName, and other demographic info.
+
+            $msql = "select TOP 1 ID, localID, FirstName, LastName, Title, JobCategory__c, LoginName, Status, EmailAddress, ".
+
+                        "HasSSLN__c, HasWMNN__c, HasWMNNMD__c, HasWMNNOH__c, HasWMNNRI__c, HasWMNNHub__c, HasLFAcademy2018__c, ".
+
+                        "HasLFAcademy2019__c, HasLFAcademy2020__c, HasLFAcademy2021__c, HasLFBoardofTrustees__c, HasLFDirectors__c, ".
+
+                        "HasLFSeniorDirectors__c, HasLFAffiliates__c, HasTXNSI__c, HasRPDC__c, HasTXNSICollaborative__c, _Preferred_Address_Line1, ".
+
+                        "_Preferred_Address_Line2, _Preferred_Address_City, _Preferred_Address_State, _Preferred_Address_PostalCode, ".
+
+                        "_Preferred_Address_Country, SchoolDistrict__c, _Preferred_PhoneNumber, LMS_Courses__c, LMS_Academy__c, LMS_AssessingImpact__c, ".
+
+                     "LMS_BecomingaLearningTeam__c, LMS_Instructor__c, LMS_LearningPrincipal__c, LMS_Networks__c, LMS_Staff__c, LMS_VirtualCoachesAcademy__c, LMS_VirtualMentorAcademy__c, ".
+
+                    "from Individual ".
+
+                    "where ID = '$individualID' ".
+
+                    "order by LastName";
+
+            //Get details by rest endpoint
+            $details_url = 'https://rest.membersuite.com/crm/v1/individuals/'.$tenant_id.'?msql='.$msql.'&page=1&pageSize=20';
+
+            $headers = array(
+                'Authorization' => 'AuthToken ' . $auth_token,
+                'Content-Type' => 'application/json'
+            );
+            
+            $args = array(
+                'headers' => $headers,
+                
+            );
+
+            $response_memberdetails = wp_remote_get( $details_url,$args );
+            $body = wp_remote_retrieve_body( $response_memberdetails );
+            $user_ms_details = json_decode( $body, 1 );
+
+            if (!empty($user_ms_details) && isset( $user_ms_details )) {
+
+               $user_data = [
+
+                    'membersuite_id' => $user_ms_details[0]['localID'],
+
+                    'firstname' => $user_ms_details[0]['firstName'],
+
+                    'lastname' => $user_ms_details[0][ 'lastName'],
+
+                    'jobtitle' => $user_ms_details[0][ 'title'],
+
+                    'jobcategory' => $user_ms_details[0][ 'jobCategory__c'],
+
+                    'msuser' => $user_ms_details[0][ 'id'] ,               
+
+                    'loginname' => $user_ms_details[0][ 'loginName'],
+
+                    'status' => $user_ms_details[0][ 'status'],
+
+                    'emailaddress' => $user_ms_details[0][ 'emailAddress'],
+
+                    'address1' => $user_ms_details[0][ '_Preferred_Address_Line1'],
+
+                    'address2' => $user_ms_details[0][ '_Preferred_Address_Line2'],
+
+                    'city' => $user_ms_details[0][ '_Preferred_Address_City'],
+
+                    'state' => $user_ms_details[0][ '_Preferred_Address_State'],
+
+                    'zip' => $user_ms_details[0][ '_Preferred_Address_PostalCode'],
+
+                    'country' => $user_ms_details[0][ '_Preferred_Address_Country'],
+
+                    'schooldistrict' => $user_ms_details[0][ 'schoolDistrict__c'],
+
+                    'phone' => $user_ms_details[0][ '_Preferred_PhoneNumber'],
+
+
+
+                    'isMember' => (bool)$receivesmemberbenefitsvalue,
+
+
+
+                    /*Communities variables */
+
+                    'communities' => [
+
+                        'hasSSLN' => lf_make_boolean( $user_ms_details[0] ['hasSSLN__c'],true),
+
+                        'hasWMNN' => lf_make_boolean( $user_ms_details[0][ 'hasWMNN__c'],true),
+
+                        'hasWMNNMD' => lf_make_boolean( $user_ms_details[0][ 'hasWMNNMD__c'],true),
+
+                        'hasWMNNOH' => lf_make_boolean( $user_ms_details[0][ 'hasWMNNOH__c'],true),
+
+                        'hasWMNNRI' => lf_make_boolean( $user_ms_details[0][ 'hasWMNNRI__c'],true),
+
+                        'hasWMNNHub' => lf_make_boolean( $user_ms_details[0][ 'hasWMNNHub__c'],true),
+
+                        'hasLFAcademy2018' => lf_make_boolean( $user_ms_details[0][ 'hasLFAcademy2018__c'],true),
+
+                        'hasLFAcademy2019' => lf_make_boolean( $user_ms_details[0][ 'hasLFAcademy2019__c'],true),
+
+                        'hasLFAcademy2020' => lf_make_boolean( $user_ms_details[0][ 'hasLFAcademy2020__c'],true),
+
+                        'hasLFAcademy2021' => lf_make_boolean( $user_ms_details[0][ 'hasLFAcademy2021__c'],true),
+
+                        'hasLFBoardofTrustees' => lf_make_boolean( $user_ms_details[0][ 'hasLFBoardofTrustees__c'],true),
+
+                        'hasLFDirectors' => lf_make_boolean( $user_ms_details[0][ 'hasLFDirectors__c'],true),
+
+                        'hasLFSeniorDirectors' => lf_make_boolean( $user_ms_details[0][ 'hasLFSeniorDirectors__c'],true),
+
+                        'hasLFAffiliates' => lf_make_boolean( $user_ms_details[0][ 'hasLFAffiliates__c'],true),
+
+                        'hasTXNSI' => lf_make_boolean( $user_ms_details[0][ 'hasTXNSI__c'],true),
+
+                        'hasRPDC' => lf_make_boolean( $user_ms_details[0][ 'hasRPDC__c'],true),
+
+                     'hasTXNSICollaborative' => lf_make_boolean( $user_ms_details[0][ 'hasTXNSICollaborative__c'],true),
+
+                    ],
+
+                    
+
+                 /* LMS variables */
+
+                 'LMS' => [
+
+                     'LMScourses'    => lf_make_boolean( $user_ms_details[0][ 'lmS_Courses__c'], true ),
+
+                     'LMSacademy'    => lf_make_boolean( $user_ms_details[0][ 'lmS_Academy__c'],true ),
+
+                     'LMSassessingImpact'    => lf_make_boolean( $user_ms_details[0][ 'lmS_AssessingImpact__c'],true ),
+
+                     'LMSbecomingaLearningTeam'  => lf_make_boolean( $user_ms_details[0][ 'lmS_BecomingaLearningTeam__c'],true ),
+
+                     'LMSinstructor' => lf_make_boolean( $user_ms_details[0][ 'lmS_Instructor__c'],true ),
+
+                     'LMSlearningPrincipal'  => lf_make_boolean( $user_ms_details[0][ 'lmS_LearningPrincipal__c'],true ),
+
+                     'LMSnetworks'   => lf_make_boolean( $user_ms_details[0][ 'lmS_Networks__c'],true ),
+
+                     'LMSstaff'  => lf_make_boolean( $user_ms_details[0][ 'lmS_Staff__c'],true ),
+
+                     'LMSvirtualCoachesAcademy'  => lf_make_boolean( $user_ms_details[0][ 'lmS_VirtualCoachesAcademy__c'],true ),
+
+                     'LMSvirtualMentorAcademy'   => lf_make_boolean( $user_ms_details[0][ 'lmS_VirtualMentorAcademy__c'],true ),
+
+                 ],
+
+                ];
+
+
+                /**
+                 * Log in the user
+                 * 
+                 */
+
+                $userobj = new WP_User();
+            
+                /* Load WP user data by loginname or username */
+                $user = $userobj->get_data_by( 'login', $user_data['loginname'] ); 
+          
+                $local_id = $user_ms_details[0]['localID'];
+                if (is_object($user)) {
+                    $user = new WP_User($user->ID); // Attempt to load up the user with that ID
+                    
+                } 
+
+                /* Find user in WP based on membersuite ID */
+                else {
+                    // Get WP User by MemberSuite ID:
+                    /**
+                     * @var WP_User_Query $user_query
+                     *@see https://usersinsights.com/wordpress-user-meta-query/
+                     */
+                    $user_query = new WP_User_Query([
+                        'meta_key' => 'membersuite_id',
+                        'meta_value' => $local_id
+                    ]);
+
+
+                    /** @var WP_User $user */
+                    foreach ($user_query->results as $user) {
+
+                       
+                        
+                        // This just assigns the first user, there should be only one to the $user object
+                        break;
+                    }
+                        
+                    
+                    if ($user instanceof WP_User && $user->ID > 0 && !empty($user_data['emailaddress']) && $user_data['loginname'] != $user->user_email) {
+                        // update Email:
+                        wp_update_user([
+                            'ID' => $user->ID,
+                            'user_email' => $user_data['loginname']
+                        ]);
+
+                    }
+                }
+
+                //Check to see if the user is logged into WordPress. If zero, then
+                //not logged into WordPress.
+                if (!($user instanceof WP_User) || $user->ID == 0 ) {
+                    // The user does not currently exist in the WordPress user table.
+                    // You have arrived at a fork in the road, choose your destiny wisely
+
+                    // If you do not want to add new users to WordPress if they do not
+                    // already exist uncomment the following line and remove the user creation code
+                    // $user = new WP_Error( 'denied', __("ERROR: Not a valid user for this system") );
+
+                    // Setup the minimum required user information for this example
+                    $wordpress_user_data = array(
+                        'user_email' => $user_data['loginname'],
+                        'user_login' => $user_data['loginname'],
+                        'first_name' => $user_data['firstname'],
+                        'last_name' => $user_data['lastname']
+                        //TODO Need to figure out how to write to an ACF field
+        //                'acf[field_5a9066d110baa]' => $individualID
+                    );
+
+                    $new_user_id = wp_insert_user( $wordpress_user_data ); // A new user has been created
+                    // echo $new_user_id;
+                    // Load the new user info
+                    $user = new WP_User( $new_user_id );
+
+                }
+
+
+                $current_membersuite_id = get_user_meta($user->ID, 'membersuite_id', true);
+                if (empty($current_membersuite_id)) {
+                    update_user_meta($user->ID,'membersuite_id', $local_id);
+                }
+
+           
+                // Login the user to after successful SSO
+                wp_clear_auth_cookie();
+                wp_set_current_user( $user->ID );
+                wp_set_auth_cookie( $user->ID );
+                update_user_caches( $user );
+                do_action( 'wp_login', $user->user_login, $user );
+
+
+                update_user_meta($user->ID,'membersuite_data', json_encode($user_data));
+
+                memberSuiteUserData::setLocalData($user_data);
+                memberSuiteUserData::syncBuddyPressGroupsToMemberSuite($user->ID);
+
+                if ( function_exists( 'aal_insert_log' ) ) {
+                    aal_insert_log( array(
+                        'action'      => 'membersuite_login',
+                        'user_caps'   => 'administrator',
+                        'user_id'     => $user->ID,
+                        'object_id'   => $user->ID,
+                        'object_type' => 'MemberSuite',
+                        'object_name' => $portalusername,
+                    ) );
+                }
+              
+                unset($_COOKIE['ms_tokenGUID']);
+                setcookie('ms_tokenGUID', '' , time()-600, '/',get_sso_cookie_domain() );
+                
+                setcookie( 'firstName', $user_data['firstname'], time()+36000, '/', get_sso_cookie_domain() );
+                setcookie( 'lastName', $user_data['lastname'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'MsUser', $user_data['msuser'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'isMember', $receivesmemberbenefitsvalue, time()+36000, '/' , get_sso_cookie_domain() );
+                setcookie( 'jobTitle', $user_data['jobtitle'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'jobCategory', $user_data['jobcategory'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'hasSSLN', $user_data['communities']['hasSSLN'], time()+36000, '/' , get_sso_cookie_domain() );
+                setcookie( 'hasWMNN', $user_data['communities']['hasWMNN'], time()+36000, '/' , get_sso_cookie_domain() );
+                setcookie( 'hasWMNNMD', $user_data['communities']['hasWMNNMD'], time()+36000, '/' , get_sso_cookie_domain() );
+                setcookie( 'hasWMNNOH', $user_data['communities']['hasWMNNOH'], time()+36000, '/' , get_sso_cookie_domain() );
+                setcookie( 'hasLFAcademy2018', $user_data['communities']['hasLFAcademy2018'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'hasLFAcademy2019', $user_data['communities']['hasLFAcademy2019'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'hasLFAcademy2020', $user_data['communities']['hasLFAcademy2020'], time()+36000, '/' , get_sso_cookie_domain() );
+                setcookie( 'hasLFAcademy2021', $user_data['communities']['hasLFAcademy2021'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'hasLFBoardofTrustees', $user_data['communities']['hasLFBoardofTrustees'], time()+36000, '/' , get_sso_cookie_domain() );
+                setcookie( 'hasLFDirectors', $user_data['communities']['hasLFDirectors'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'hasLFSeniorDirectors', $user_data['communities']['hasLFSeniorDirectors'], time()+36000, '/' , get_sso_cookie_domain() );
+                setcookie( 'hasLFAffiliates', $user_data['communities']['hasLFAffiliates'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'hasTXNSI', $user_data['communities']['hasTXNSI'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'hasRPDC', $user_data['communities']['hasRPDC'], time()+36000, '/' , get_sso_cookie_domain() );
+                setcookie( 'hasTXNSICollaborative', $user_data['communities']['hasTXNSICollaborative'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'LMScourses', $user_data['LMS']['LMScourses'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'LMSacademy', $user_data['LMS']['LMSacademy'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'LMSassessingImpact', $user_data['LMS']['LMSassessingImpact'], time()+36000, '/' , get_sso_cookie_domain() );
+                setcookie( 'LMSbecomingaLearningTeam', $user_data['LMS']['LMSbecomingaLearningTeam'], time()+36000, '/' , get_sso_cookie_domain() );
+                setcookie( 'LMSinstructor', $user_data['LMS']['LMSinstructor'], time()+36000, '/' , get_sso_cookie_domain() );
+                setcookie( 'LMSlearningPrincipal', $user_data['LMS']['LMSlearningPrincipal'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'LMSnetworks', $user_data['LMS']['LMSnetworks'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'LMSstaff', $user_data['LMS']['LMSstaff'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'LMSvirtualCoachesAcademy', $user_data['LMS']['LMSvirtualCoachesAcademy'], time()+36000, '/', get_sso_cookie_domain()  );
+                setcookie( 'LMSvirtualMentorAcademy', $user_data['LMS']['LMSvirtualMentorAcademy'], time()+36000, '/' , get_sso_cookie_domain() );
+                 
+                
+            
+                                    
+            }else{
+                 error_log('[MemberSuite-SSO, File: '.__FILE__.' on Line: '.__LINE__.'] '.
+                    '$api->ExecuteMSQL failed to get the Individual table for WP User: '.get_current_user_id().'('.$user_ms_data['firstName'].') with MS guid ID: '.$individualID.PHP_EOL.
+                    print_r($user_ms_details, true)
+                );
+            }
+        }
+    }
+
+
+    if( is_user_logged_in() && $_GET['login'] == 'success' && is_page( 9 ) ){
+        header("Refresh:0; url=".home_url()."");
+        exit;
+    }
+} 
+
+
+/**
+ * Make boolean
+ */
+
+function lf_make_boolean( $array_value , $make_bool = false ){
+    if ($make_bool) {
+        return filter_var($array_value, FILTER_VALIDATE_BOOLEAN );
+    }
+
+    return $array_value;
+}
+
+/**
+ * Get Whoami Data
+ */
+
+function lf_get_ms_whoami( $auth_token ){
+
+    $user_ms_data = '';
+    if( isset( $auth_token ) ){
+        $url = 'https://rest.membersuite.com/platform/v2/whoami';
+        
+        $headers = array(
+            'Authorization' => 'AuthToken ' . $auth_token,
+            'Content-Type' => 'application/json'
+        );
+        
+        $args = array(
+            'headers' => $headers,
+            
+        );
+        $response_whoami = wp_remote_get( $url,$args );
+
+        if (is_wp_error( $response_whoami ) ) {
+            // Error handling
+             error_log('[MemberSuite-SSO, File: '.__FILE__.' on Line: '.__LINE__.'] '.
+                    '$api->ExecuteMSQL failed to get the user info from endpoint : '.$url.PHP_EOL
+                    // .print_r($response_whoami->get_error_message(), true)
+                );
+            // wp_die('<pre>' .$response_whoami->get_error_message() . '</pre>', 'Curl error? ' . __LINE__);
+
+        } else {
+            // Success, do something with the response_whoami data
+            $body = wp_remote_retrieve_body( $response_whoami );
+            $user_ms_data = json_decode( $body, 1 );
+        }
+    }
+
+    return $user_ms_data;
+}
+/**
+ * Get Membersuite AuthToken
+ */
+function lf_get_ms_auth_token( $tokenGUID_cookie, $tenant_id ){
+
+    $authToken = '';
+    if( !empty( $tokenGUID_cookie ) && !empty( $tenant_id ) ){
+
+        $url = 'https://rest.membersuite.com/platform/v2/regularSSO';
+        $data = array(
+            'partitionKey' => $tenant_id,
+            'tokenGUID' => $tokenGUID_cookie,
+            
+        );
+        
+        $request_url = add_query_arg($data, $url);
+        $response = wp_remote_get($request_url);
+
+        if (is_wp_error($response) || '400' == $response['response']['code']) {
+                
+           error_log('[MemberSuite-SSO, File: '.__FILE__.' on Line: '.__LINE__.'] '.
+                    '$api->ExecuteMSQL failed to get the auth Token from endpoint: '.$url.PHP_EOL
+                    // .print_r($response_whoami->get_error_message(), true)
+
+                );
+            // wp_die('<pre>' .$response->get_error_message() . '</pre>', 'Curl error? ' . __LINE__);
+
+
+        }else{
+            $authToken = wp_remote_retrieve_body( $response ); // Get location field
+
+        }
+    }
+
+    return $authToken;
+}
+
+
 
 /* User Login function */
 add_action( 'parse_request', 'mssso_portal_login' );
@@ -75,20 +534,24 @@ function mssso_portal_login( $wp ) {
         $api = new MemberSuite();
         $current_user = wp_get_current_user();
 
-        $returnURL = home_url();
+        $returnURL = home_url().'?login=success';
+       
 
         // get our query strings and check if we have a returnURL parameter
         parse_str( $_SERVER['QUERY_STRING'], $query_string );
+        if( strpos( $_SERVER['REQUEST_URI'], '/sso-test' ) == true ){
+            $returnURL = home_url().'?login=success';
+
+        }
 
         if ( isset( $_SERVER['QUERY_STRING'] ) && isset( $query_string['returnURL'] ) ) {
             if ( $query_string['returnURL'] ) {
-                $returnURL = $query_string['returnURL'];
+                $returnURL = $query_string['returnURL'].'?login=success';
             }
         }
-        
        /* Redirect after successful login to the set redirect parameter for WP Members */ 
          if(isset($_POST['redirect_to'])){
-            $returnURL = $_POST['redirect_to'] ;
+            $returnURL = $_POST['redirect_to'].'?login=success';
          } 
 
         /* The MS API information */
@@ -182,12 +645,11 @@ function mssso_portal_login( $wp ) {
             header( 'location:' . home_url() . '/login?error=credential-error');
 
 
-
             error_log('[MemberSuite-SSO, '.__FILE__.' on Line: '.__LINE__.'] No User? for username: '.
 
-                get_current_user_id().'('.$portalusername.') '.PHP_EOL .
+                get_current_user_id().'('.$portalusername.') '.PHP_EOL
 
-                print_r(Curl::getCurlError(), true)
+                // .print_r(Curl::getCurlError(), true)
 
             );
 
@@ -265,9 +727,8 @@ function mssso_portal_login( $wp ) {
 
             error_log('[MemberSuite-SSO, '.__FILE__.' on Line: '.__LINE__.'] No User? for username: '.
 
-                get_current_user_id().'('.$portalusername.') '.PHP_EOL .
-
-                print_r($response->aResultValue->aPortalUser, true)
+                get_current_user_id().'('.$portalusername.') '.PHP_EOL 
+                // .print_r($response->aResultValue->aPortalUser, true)
 
             );
 
@@ -281,7 +742,7 @@ function mssso_portal_login( $wp ) {
 
 
 
-            header( 'location:' . home_url() . '/login?error=credential-error');
+            header( 'location:' . home_url() . '/login?error=credential-error'.__LINE__);
 
             wp_die( 'Invalid login credentials', 'Portal Login' );
 
@@ -297,15 +758,9 @@ function mssso_portal_login( $wp ) {
 
         $api->digitalsignature = $helper->DigitalSignature( $api->portalusername, $rsaXML );
 
-
-
-
-
         // Create Token for sso
 
         $response = $api->CreatePortalSecurityToken( $api->portalusername, $api->signingcertificateId, $api->digitalsignature );
-
-
 
         if ( $response->aSuccess=='false' ) {
 
@@ -316,21 +771,17 @@ function mssso_portal_login( $wp ) {
         }
 
 
-
         $securityToken = $response->aResultValue;
-
-        
 
         $individualID = $guid;
 
-        $ch = curl_init();
         $associationId = Userconfig::read( 'AssociationId' );
 
         $url = 'https://rest.membersuite.com/platform/v2/regularSSO';
         $data = array(
             'token' => $securityToken,
-            'nextURL' => $returnURL,
-            'tenantId'=> 35553
+            'nextURL' => $returnURL
+           
         );
 
         $headers = array(
@@ -349,10 +800,7 @@ function mssso_portal_login( $wp ) {
 
         if (is_wp_error($response_wp)) {
             // Handle error...
-            wp_die('<h3>Curl ERROR message, line: '.__LINE__.'</h3><pre>' . $result->get_error_message() . PHP_EOL .
-                    //print_r(get_option( 'membersuite_sso_option_name' ), true).
-
-                    '</pre>', 'Failed login ' . __LINE__);
+            error_log('[MemberSuite-SSO, file: '.__FILE__.' on '.__LINE__.'] API Request can not be completed for SSO Token with MS guid ID ');
         } else {
             $location = wp_remote_retrieve_header($response_wp, 'location'); // Get location field
             // Process response and location...
@@ -360,602 +808,38 @@ function mssso_portal_login( $wp ) {
 
 
             $tokenGUID = $query_params['tokenGUID'];
-            $get_url = 'https://rest.membersuite.com/platform/v2/regularSSO';
-            $data = array(
-                'tokenGUID' => $tokenGUID,
-                'partitionKey' => 35553,
-            );
 
-            $response_wp_get = wp_remote_get($get_url, array(
-                'method' => 'GET',
-                'body' => $data,
-                'timeout' => 45,
-                'redirection' => 0
-            ));
+            // Set tokenGUID Cookie for 5 mins
 
-            if (is_wp_error($response_wp_get)) {
-            // Handle error...
-                wp_die('<h3>Curl ERROR message, line: '.__LINE__.'</h3><pre>' . $result->get_error_message() . PHP_EOL .
-                    //print_r(get_option( 'membersuite_sso_option_name' ), true).
+            $tenant_id = Userconfig::read( 'tenantID' );
+            $get_auth_token = lf_get_ms_auth_token( $tokenGUID, $tenant_id );
 
-                        '</pre>', 'Failed login ' . __LINE__);
-            }else{
+            // Get ms user data
+            // Call the Auth Token API
+           
+            if( isset( $get_auth_token ) && $get_auth_token !=false ){
+                $auth_token = $get_auth_token;
 
-                $authToken = wp_remote_retrieve_body($response_wp_get);
+            } 
 
-                
-                $get_url_whoami = 'https://rest.membersuite.com/platform/v2/whoami';
+            // Call the Whoami API
+            $user_ms_data = lf_get_ms_whoami( $auth_token );
+            
+            $ms_user = $user_ms_data['ownerId'];
+            // If user data exists check if user receives member benefits
+            // $other_user_data = '';
 
-                $headers = array(
-                    'Accept'=> 'application/json',
-                    'Authorization'=>' AuthToken '.$authToken,
-                );
+            setcookie( 'ms_tokenGUID', $tokenGUID, time()+300, '/' , get_sso_cookie_domain() );
+            setcookie( 'lf_return_url', $returnURL, time()+300, '/' , get_sso_cookie_domain() );
 
-                $response_wp_get_whoami = wp_remote_get($get_url_whoami, array(
-                    'method' => 'GET',
-                    'timeout' => 45,
-                    'redirection' => 0,
-                    'headers' => $headers
-                ));
-
-                 // wp_die('<h3>Curl ERROR message, line: '.__LINE__.'</h3><pre>' . print_r($response_wp_get_whoami,1) . PHP_EOL .
-                 //    //print_r(get_option( 'membersuite_sso_option_name' ), true).
-
-                 //        '</pre>', 'Failed login ' . __LINE__);
-            }
-          
-
+            // Set cookie for Podi
+            setcookie( 'MsUser',$ms_user, time()+300, '/', get_sso_cookie_domain()  );
+            
+            
+            header("Location: ".$location  );
+            exit;
         }   
 
-//      // Using the Object Query Model to search for the person's
-
-//      // ReceivesMemberBenefits status
-
-//         /** @var Search $search */
-
-//      $search = new Search();
-
-//      /** @var Expr $expr */
-
-//      $expr = new Expr();
-
-//      $search->Type='Membership'; //Type is mandatory
-
-
-
-//      $search->AddOutputColumn('Status');
-
-//      $search->AddOutputColumn('FirstName');
-
-//      $search->AddOutputColumn('ReceivesMemberBenefits');
-
-//      $search->AddCriteria($expr->Equals('Individual.Id', $individualID));
-
-
-
-//      /** @var bool|stdClass $objectQuery */
-
-//      $objectQuery = $api->ExecuteSearch($search, 0, 1);
-
-
-
-//      if (!$objectQuery) {
-
-//          // This is an error something failed
-
-//             // @TODO how to log WP error?
-
-//             error_log('[MemberSuite-SSO, file: '.__FILE__.' on '.__LINE__.'] API Request can not be generated for WP User: '.get_current_user_id().'('.$portalusername.') with MS guid ID: '.$individualID);
-
-//         }
-
-
-
-//      $objectqueryresponse = $objectQuery->aResultValue->aTable->diffgrdiffgram->NewDataSet;
-
-
-
-//      //If the CRM does NOT receive member benefits
-
-//         if (!$objectqueryresponse) {
-
-//             $receivesmemberbenefitsvalue = 0;
-
-
-
-//         } else {
-
-//             // The CRM does HAVE receive member benefits
-
-//             //Loop through the CRM to see if there are multiple membership records
-
-//             foreach($objectqueryresponse as $key => $array) {
-
-
-
-//                 //If the CRM does HAVE an array of membership records, proceed
-
-//                 if (is_array($array)) {
-
-//                     //See http://php.net/manual/en/function.array-search.php
-
-//                     //http://php.net/manual/en/function.array-column.php
-
-//                     $key = array_column($array, 'ReceivesMemberBenefits');
-
-
-
-//                     //Yes, at least one membership record receives benefits
-
-//                     if (in_array('true', $key)) {
-
-//                         $receivesmemberbenefitsvalue = 1;
-
-
-
-//                     } else {
-
-//                         //No, none of the membership records receives benefits
-
-//                         $receivesmemberbenefitsvalue = 0;
-
-//                     }
-
-//                 } else {
-
-//                     //No, there are not multiple member records
-
-//                     //but Yes, the CRM does HAVE receives member benefits
-
-//                     $receivesmemberbenefitsvalue = 1;
-
-//                 }
-
-//             }
-
-//         }
-
-
-
-//      //Using MSQL Query Method to search for the person's
-
-//      //FirstName, LastName, and other demographic info.
-
-//      $msql = "select TOP 1 ID, FirstName, LastName, Title, JobCategory__c, LoginName, Status, EmailAddress, ".
-
-//                 "HasSSLN__c, HasWMNN__c, HasWMNNMD__c, HasWMNNOH__c, HasWMNNRI__c, HasWMNNHub__c, HasLFAcademy2018__c, ".
-
-//                 "HasLFAcademy2019__c, HasLFAcademy2020__c, HasLFAcademy2021__c, HasLFBoardofTrustees__c, HasLFDirectors__c, ".
-
-//                 "HasLFSeniorDirectors__c, HasLFAffiliates__c, HasTXNSI__c, HasRPDC__c, HasTXNSICollaborative__c, _Preferred_Address_Line1, ".
-
-//                 "_Preferred_Address_Line2, _Preferred_Address_City, _Preferred_Address_State, _Preferred_Address_PostalCode, ".
-
-//                 "_Preferred_Address_Country, SchoolDistrict__c, _Preferred_PhoneNumber, LMS_Courses__c, LMS_Academy__c, LMS_AssessingImpact__c, ".
-
-//              "LMS_BecomingaLearningTeam__c, LMS_Instructor__c, LMS_LearningPrincipal__c, LMS_Networks__c, LMS_Staff__c, LMS_VirtualCoachesAcademy__c, LMS_VirtualMentorAcademy__c, ".
-
-//             "from Individual ".
-
-//             "where ID = '$individualID' ".
-
-//             "order by LastName";
-
-
-
-//      $start_record = 0;
-
-//      $max_records = null;
-
-
-
-//      $msqlResult = $api->ExecuteMSQL($msql, $start_record, $max_records);
-
-
-
-//      if (!empty($msqlResult) && isset($msqlResult->aResultValue->aSearchResult->aTable->diffgrdiffgram->NewDataSet)) {
-
-//          $msqlFinalResult = $msqlResult->aResultValue->aSearchResult->aTable->diffgrdiffgram->NewDataSet;
-
-
-
-//          if (!isset($msqlFinalResult->Table)) {
-
-//                 error_log('[MemberSuite-SSO, File: '.__FILE__.' on Line: '.__LINE__.'] '.
-
-//                     '$api->ExecuteMSQL failed to get the Individual table for WP User: '.get_current_user_id().'('.$portalusername.') with MS guid ID: '.$individualID.PHP_EOL.
-
-//                     print_r($msqlFinalResult, true)
-
-//                 );
-
-//             }
-
-
-
-//          /** @var stdClass $individualTable - from MemberSuite API*/
-
-//          $individualTable = $msqlFinalResult->Table;
-
-
-
-//          //Creating the variables with the value information
-
-//             // all fields ending in __c are custom fields in MemberSuite CRM individual records
-
-//             $user_data = [
-
-//                 'membersuite_id' => $local_id,
-
-//                 'firstname' => getObjectPropertyValue($individualTable, 'FirstName'),
-
-//                 'lastname' => getObjectPropertyValue($individualTable, 'LastName'),
-
-//                 'jobtitle' => getObjectPropertyValue($individualTable, 'Title'),
-
-//                 'jobcategory' => getObjectPropertyValue($individualTable, 'JobCategory__c'),
-
-//                 'msuser' => getObjectPropertyValue($individualTable, 'ID'),
-
-//                 'loginname' => getObjectPropertyValue($individualTable, 'LoginName'),
-
-//                 'status' => getObjectPropertyValue($individualTable, 'Status'),
-
-//                 'emailaddress' => getObjectPropertyValue($individualTable, 'EmailAddress'),
-
-
-
-//                 'address1' => getObjectPropertyValue($individualTable, '_Preferred_Address_Line1'),
-
-//                 'address2' => getObjectPropertyValue($individualTable, '_Preferred_Address_Line2'),
-
-//                 'city' => getObjectPropertyValue($individualTable, '_Preferred_Address_City'),
-
-//                 'state' => getObjectPropertyValue($individualTable, '_Preferred_Address_State'),
-
-//                 'zip' => getObjectPropertyValue($individualTable, '_Preferred_Address_PostalCode'),
-
-//                 'country' => getObjectPropertyValue($individualTable, '_Preferred_Address_Country'),
-
-//                 'schooldistrict' => getObjectPropertyValue($individualTable, 'SchoolDistrict__c'),
-
-//                 'phone' => getObjectPropertyValue($individualTable, '_Preferred_PhoneNumber'),
-
-
-
-//                 'isMember' => (bool)$receivesmemberbenefitsvalue,
-
-
-
-//                 /*Communities variables */
-
-//                 'communities' => [
-
-//                     'hasSSLN' => getObjectPropertyValue($individualTable, 'HasSSLN__c', false, true),
-
-//                     'hasWMNN' => getObjectPropertyValue($individualTable, 'HasWMNN__c', false, true),
-
-//                     'hasWMNNMD' => getObjectPropertyValue($individualTable, 'HasWMNNMD__c',  false, true),
-
-//                     'hasWMNNOH' => getObjectPropertyValue($individualTable, 'HasWMNNOH__c',  false, true),
-
-//                     'hasWMNNRI' => getObjectPropertyValue($individualTable, 'HasWMNNRI__c',  false, true),
-
-//                     'hasWMNNHub' => getObjectPropertyValue($individualTable, 'HasWMNNHub__c',  false, true),
-
-//                     'hasLFAcademy2018' => getObjectPropertyValue($individualTable, 'HasLFAcademy2018__c',  false, true),
-
-//                     'hasLFAcademy2019' => getObjectPropertyValue($individualTable, 'HasLFAcademy2019__c',  false, true),
-
-//                     'hasLFAcademy2020' => getObjectPropertyValue($individualTable, 'HasLFAcademy2020__c',  false, true),
-
-//                     'hasLFAcademy2021' => getObjectPropertyValue($individualTable, 'HasLFAcademy2021__c',  false, true),
-
-//                     'hasLFBoardofTrustees' => getObjectPropertyValue($individualTable, 'HasLFBoardofTrustees__c',  false, true),
-
-//                     'hasLFDirectors' => getObjectPropertyValue($individualTable, 'HasLFDirectors__c',  false, true),
-
-//                     'hasLFSeniorDirectors' => getObjectPropertyValue($individualTable, 'HasLFSeniorDirectors__c',  false, true),
-
-//                     'hasLFAffiliates' => getObjectPropertyValue($individualTable, 'HasLFAffiliates__c',  false, true),
-
-//                     'hasTXNSI' => getObjectPropertyValue($individualTable, 'HasTXNSI__c',  false, true),
-
-//                     'hasRPDC' => getObjectPropertyValue($individualTable, 'HasRPDC__c',  false, true),
-
-//                  'hasTXNSICollaborative' => getObjectPropertyValue($individualTable, 'HasTXNSICollaborative__c',  false, true),
-
-//                 ],
-
-                
-
-//              /* LMS variables */
-
-//              'LMS' => [
-
-//                  'LMScourses'    => getObjectPropertyValue($individualTable, 'LMS_Courses__c',  false, true),
-
-//                  'LMSacademy'    => getObjectPropertyValue($individualTable, 'LMS_Academy__c',  false, true),
-
-//                  'LMSassessingImpact'    => getObjectPropertyValue($individualTable, 'LMS_AssessingImpact__c',  false, true),
-
-//                  'LMSbecomingaLearningTeam'  => getObjectPropertyValue($individualTable, 'LMS_BecomingaLearningTeam__c',  false, true),
-
-//                  'LMSinstructor' => getObjectPropertyValue($individualTable, 'LMS_Instructor__c',  false, true),
-
-//                  'LMSlearningPrincipal'  => getObjectPropertyValue($individualTable, 'LMS_LearningPrincipal__c',  false, true),
-
-//                  'LMSnetworks'   => getObjectPropertyValue($individualTable, 'LMS_Networks__c',  false, true),
-
-//                  'LMSstaff'  => getObjectPropertyValue($individualTable, 'LMS_Staff__c',  false, true),
-
-//                  'LMSvirtualCoachesAcademy'  => getObjectPropertyValue($individualTable, 'LMS_VirtualCoachesAcademy__c',  false, true),
-
-//                  'LMSvirtualMentorAcademy'   => getObjectPropertyValue($individualTable, 'LMS_VirtualMentorAcademy__c',  false, true),
-
-//              ],
-
-//             ];
-
-
-
-//      } else {
-
-//          // @TODO if there was not individual table returned, is this an error?
-
-//             // Log
-
-//             error_log('[MemberSuite-SSO, '.__FILE__.' on Line: '.__LINE__.'] $api->ExecuteMSQL failed for WP User: '.
-
-//                 get_current_user_id().'('.$portalusername.') with MS guid ID: '.$individualID .PHP_EOL .
-
-//                 print_r($msqlResult, true)
-
-//             );
-
-//         }
-
-//      /* Successfully logged in */
-
-
-
-//      $userobj = new WP_User();
-
-
-
-        
-
-//         /* Load WP user data by loginname or username */
-
-//      $user = $userobj->get_data_by( 'login', $user_data['loginname'] ); 
-
-
-
-//         if (is_object($user)) {
-
-//             $user = new WP_User($user->ID); // Attempt to load up the user with that ID
-
-
-
-//         } 
-
-//      /* Find user in WP based on membersuite ID */
-
-//      else {
-
-//             // Get WP User by MemberSuite ID:
-
-//             /**
-
-//              * @var WP_User_Query $user_query
-
-//              *@see https://usersinsights.com/wordpress-user-meta-query/
-
-//              */
-
-//             $user_query = new WP_User_Query([
-
-//                 'meta_key' => 'membersuite_id',
-
-//                 'meta_value' => $local_id
-
-//             ]);
-
-
-
-//             $users = $user_query->get_results();
-
-//             /** @var WP_User $user */
-
-//             foreach ($users as $user) {
-
-//                 // This just assigns the first user, there should be only one to the $user object
-
-//                 break;
-
-//             }
-
-
-
-//             if ($user instanceof WP_User && $user->ID > 0 && !empty($user_data['emailaddress']) && $user_data['loginname'] != $user->user_email) {
-
-//                 // update Email:
-
-//                 wp_update_user([
-
-//                     'ID' => $user->ID,
-
-//                     'user_email' => $user_data['loginname']
-
-//                 ]);
-
-//             }
-
-//         }
-
-
-
-//         //Check to see if the user is logged into WordPress. If zero, then
-
-//         //not logged into WordPress.
-
-//      if (!($user instanceof WP_User) || $user->ID == 0 ) {
-
-//          // The user does not currently exist in the WordPress user table.
-
-//          // You have arrived at a fork in the road, choose your destiny wisely
-
-
-
-//          // If you do not want to add new users to WordPress if they do not
-
-//          // already exist uncomment the following line and remove the user creation code
-
-//          // $user = new WP_Error( 'denied', __("ERROR: Not a valid user for this system") );
-
-
-
-//          // Setup the minimum required user information for this example
-
-//          $wordpress_user_data = array(
-
-//              'user_email' => $user_data['loginname'],
-
-//              'user_login' => $user_data['loginname'],
-
-//              'first_name' => $user_data['firstname'],
-
-//              'last_name' => $user_data['lastname']
-
-//                 //TODO Need to figure out how to write to an ACF field
-
-// //                'acf[field_5a9066d110baa]' => $individualID
-
-//          );
-
-
-
-//          $new_user_id = wp_insert_user( $wordpress_user_data ); // A new user has been created
-
-
-
-//          // Load the new user info
-
-//          $user = new WP_User( $new_user_id );
-
-//      }
-
-
-
-//         $current_membersuite_id = get_user_meta($user->ID, 'membersuite_id', true);
-
-//      if (empty($current_membersuite_id)) {
-
-//          update_user_meta($user->ID,'membersuite_id', $local_id);
-
-//         }
-
-
-
-//         /* Log user in and set all required cookies based on the variables set above */
-
-//      wp_set_auth_cookie($user->ID);
-
-        
-
-//      setcookie( 'firstName', $user_data['firstname'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'lastName', $user_data['lastname'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'MsUser', $user_data['msuser'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'isMember', $receivesmemberbenefitsvalue, time()+36000, '/' , get_sso_cookie_domain() );
-
-//         setcookie( 'jobTitle', $user_data['jobtitle'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//         setcookie( 'jobCategory', $user_data['jobcategory'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'hasSSLN', $user_data['communities']['hasSSLN'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'hasWMNN', $user_data['communities']['hasWMNN'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'hasWMNNMD', $user_data['communities']['hasWMNNMD'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'hasWMNNOH', $user_data['communities']['hasWMNNOH'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'hasLFAcademy2018', $user_data['communities']['hasLFAcademy2018'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'hasLFAcademy2019', $user_data['communities']['hasLFAcademy2019'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'hasLFAcademy2020', $user_data['communities']['hasLFAcademy2020'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'hasLFAcademy2021', $user_data['communities']['hasLFAcademy2021'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'hasLFBoardofTrustees', $user_data['communities']['hasLFBoardofTrustees'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'hasLFDirectors', $user_data['communities']['hasLFDirectors'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'hasLFSeniorDirectors', $user_data['communities']['hasLFSeniorDirectors'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'hasLFAffiliates', $user_data['communities']['hasLFAffiliates'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'hasTXNSI', $user_data['communities']['hasTXNSI'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'hasRPDC', $user_data['communities']['hasRPDC'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'hasTXNSICollaborative', $user_data['communities']['hasTXNSICollaborative'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'LMScourses', $user_data['LMS']['LMScourses'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'LMSacademy', $user_data['LMS']['LMSacademy'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'LMSassessingImpact', $user_data['LMS']['LMSassessingImpact'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'LMSbecomingaLearningTeam', $user_data['LMS']['LMSbecomingaLearningTeam'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'LMSinstructor', $user_data['LMS']['LMSinstructor'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'LMSlearningPrincipal', $user_data['LMS']['LMSlearningPrincipal'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'LMSnetworks', $user_data['LMS']['LMSnetworks'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'LMSstaff', $user_data['LMS']['LMSstaff'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'LMSvirtualCoachesAcademy', $user_data['LMS']['LMSvirtualCoachesAcademy'], time()+36000, '/' , get_sso_cookie_domain() );
-
-//      setcookie( 'LMSvirtualMentorAcademy', $user_data['LMS']['LMSvirtualMentorAcademy'], time()+36000, '/' , get_sso_cookie_domain() );
-
-
-
-//         update_user_meta($user->ID,'membersuite_data', json_encode($user_data));
-
-
-
-//         memberSuiteUserData::setLocalData($user_data);
-
-//         memberSuiteUserData::syncBuddyPressGroupsToMemberSuite($user->ID);
-
-
-
-//      if ( function_exists( 'aal_insert_log' ) ) {
-
-//          aal_insert_log( array(
-
-//              'action'      => 'membersuite_login',
-
-//              'user_caps'   => 'administrator',
-
-//              'user_id'     => $user->ID,
-
-//              'object_id'   => $user->ID,
-
-//              'object_type' => 'MemberSuite',
-
-//              'object_name' => $portalusername,
-
-//          ) );
-
-//      }
 
         ?>
         <!-- Process the MS login form in background  -->
@@ -986,11 +870,11 @@ function mssso_portal_login( $wp ) {
             </style>
         </head>
         <body>
-            <div class="loading_1">
+            <div class="loading">
                 <p>Please wait while we verify your credentials</p>
             </div>
             
-            <form name="LoginForm" method="post" id="LoginForm" action="<?php echo $_SERVER['PHP_SELF'] ?>">
+            <form name="LoginForm" method="post" id="LoginForm" action="<?php echo $_SERVER['PHP_SELF']; ?>">
                 <input type="hidden" name="token" id="Token" value="<?php echo $securityToken; ?>" />
 
                
@@ -1194,4 +1078,11 @@ function user_communities_code(){
             echo '<div class="clearfix"><a class="button orange-button" href="https://communities.learningforward.org/groups/academy-class-of-2021/" target="_blank">Academy Class of 2021 Community</a></div><br>';
         }
         return ob_get_clean();
+}
+
+add_action('wp_footer','test_script');
+function test_script(){
+    $user_id = get_current_user_id();
+    $user_meta = get_user_meta( 15415 ,'membersuite_data',true );
+    // echo "<pre>".print_r( $user_meta,1 )."</pre>";
 }
