@@ -36,7 +36,7 @@ function mssso_login( $attr, $content = null ) {
         $output .= '</div>';
 	$output .= '</form>';
 
-	$output .= '<a href="https://lf.ps.membersuite.com/profile/ForgotPassword.aspx?returnURL=https://learningforward.org/password-reset-request">Forgot account?</a>';
+	$output .= '<a href="https://domain.com/profile/ForgotPassword.aspx?returnURL=https://domain.com/password-reset-request">Forgot account?</a>';
 
 	return $output;
 }
