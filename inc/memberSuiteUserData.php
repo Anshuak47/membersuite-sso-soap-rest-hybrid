@@ -157,7 +157,7 @@ class memberSuiteUserData
     {
         $current_blog_id = get_current_blog_id();
 
-        $sites = get_sites(['domain__in' => ['communities.lfstage.xyz', 'communities.learningforward.org']]);
+        $sites = get_sites(['domain__in' => ['domain', 'domain']]);
         if (is_array($sites) && isset($sites[0]) && $sites[0] instanceof WP_Site) {
             /** @var WP_Site $communities */
             $communities = $sites[0];
