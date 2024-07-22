@@ -567,7 +567,7 @@ function get_ms_member_first_name() {
 function get_ms_url() {
     //First check to see if the person is really logged into WP
     $user = wp_get_current_user();
-	return 'https://lf.ps.membersuite.com';
+	return 'https://domain.com';
 }
 
 /**
@@ -581,5 +581,5 @@ function get_sso_cookie_domain() {
     $user = wp_get_current_user();
 
 
-	return 'learningforward.org';
+	return 'domain.com';
 }
